@@ -161,7 +161,9 @@ class TimerService : Service() {
             isCompleted = true
         )
         val vibrator = getSystemService(VibratorManager::class.java)?.defaultVibrator
-        vibrator?.vibrate(VibrationEffect.createOneShot(500, VibrationEffect.DEFAULT_AMPLITUDE))
+        val timings = longArrayOf(0, 500, 200, 500, 200, 500)
+        val amplitudes = intArrayOf(0, 255, 0, 255, 0, 255)
+        vibrator?.vibrate(VibrationEffect.createWaveform(timings, amplitudes, -1))
         cancelCompletionAlarm()
         releaseCpuWakeLock()
         stopForeground(STOP_FOREGROUND_REMOVE)
