@@ -1,16 +1,26 @@
 package com.niuda.minimalpomodora.presentation
 
+import android.Manifest
+import android.app.Activity
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
+import android.widget.Toast
 import androidx.activity.ComponentActivity
-import androidx.activity.compose.setContent
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.*
+import androidx.compose.ui.platform.LocalContext
+import androidx.core.content.ContextCompat
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.wear.compose.navigation.SwipeDismissableNavHost
 import androidx.wear.compose.navigation.composable
 import androidx.wear.compose.navigation.rememberSwipeDismissableNavController
 import com.niuda.minimalpomodora.data.SettingsRepository
+import com.niuda.minimalpomodora.model.TimerType
 import com.niuda.minimalpomodora.presentation.theme.MinimalPomodoraTheme
 
 class MainActivity : ComponentActivity() {
@@ -29,6 +39,8 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 fun PomodoroApp() {
+    val context = LocalContext.current
+    val activity = context as? Activity
     val navController = rememberSwipeDismissableNavController()
     val settingsRepo = remember { SettingsRepository(navController.context) }
     val timerViewModel: TimerViewModel = viewModel()
@@ -36,6 +48,44 @@ fun PomodoroApp() {
     var focusDuration by remember { mutableStateOf(settingsRepo.getFocusDuration()) }
     var shortBreakDuration by remember { mutableStateOf(settingsRepo.getShortBreakDuration()) }
     var longBreakDuration by remember { mutableStateOf(settingsRepo.getLongBreakDuration()) }
+    var pendingStart by remember { mutableStateOf<(() -> Unit)?>(null) }
+
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (!granted) {
+            Toast.makeText(
+                context,
+                "Notifications are disabled. Background timing may be unreliable.",
+                Toast.LENGTH_LONG
+            ).show()
+        }
+        pendingStart?.invoke()
+        pendingStart = null
+    }
+
+    DisposableEffect(Unit) {
+        timerViewModel.bind(context)
+        onDispose { timerViewModel.unbind(context) }
+    }
+
+    fun startTimerWithPermission(type: TimerType, durationMinutes: Int) {
+        val startAction = {
+            timerViewModel.start(context, durationMinutes, type)
+            navController.navigate("timer/${type.name}")
+        }
+        val needsPermission = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.POST_NOTIFICATIONS
+            ) != PackageManager.PERMISSION_GRANTED
+        if (needsPermission && activity != null) {
+            pendingStart = startAction
+            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        } else {
+            startAction()
+        }
+    }
 
     SwipeDismissableNavHost(
         navController = navController,
@@ -48,16 +98,13 @@ fun PomodoroApp() {
                 longBreakDuration = longBreakDuration,
                 onSettingsClick = { navController.navigate("settings") },
                 onFocusClick = {
-                    timerViewModel.start(focusDuration)
-                    navController.navigate("timer/Focus")
+                    startTimerWithPermission(TimerType.FOCUS, focusDuration)
                 },
                 onShortBreakClick = {
-                    timerViewModel.start(shortBreakDuration)
-                    navController.navigate("timer/Short Break")
+                    startTimerWithPermission(TimerType.SHORT_BREAK, shortBreakDuration)
                 },
                 onLongBreakClick = {
-                    timerViewModel.start(longBreakDuration)
-                    navController.navigate("timer/Long Break")
+                    startTimerWithPermission(TimerType.LONG_BREAK, longBreakDuration)
                 }
             )
         }
@@ -81,7 +128,9 @@ fun PomodoroApp() {
         }
 
         composable("timer/{type}") { backStackEntry ->
-            val timerType = backStackEntry.arguments?.getString("type") ?: "Timer"
+            val typeName = backStackEntry.arguments?.getString("type")
+            val timerType = typeName?.let { runCatching { TimerType.valueOf(it) }.getOrNull() }
+                ?: TimerType.FOCUS
             BackHandler {
                 timerViewModel.stop()
                 navController.popBackStack()

@@ -44,7 +44,7 @@ fun MenuScreen(
         Button(
             onClick = onShortBreakClick,
             modifier = Modifier.fillMaxWidth(0.8f),
-            colors = ButtonDefaults.buttonColors(backgroundColor = Color.Green)
+            colors = ButtonDefaults.buttonColors(backgroundColor = Color(0xFF2E7D32))
         ) {
             Text("Short Break (${shortBreakDuration}m)")
         }

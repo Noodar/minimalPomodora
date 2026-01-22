@@ -7,7 +7,7 @@ A minimal Pomodoro timer application for Wear OS smartwatches built with Jetpack
 - **Package Name**: `com.niuda.minimalpomodora`
 - **Project Name**: minimalPomodora
 - **Platform**: Wear OS (Android Smartwatch)
-- **Min SDK**: API 30 (Wear OS 3.0+)
+- **Min SDK**: API 33 (Wear OS 4.0+)
 - **Framework**: Jetpack Compose for Wear OS
 - **Storage**: SharedPreferences
 - **UI Design**: Material Design default colors
@@ -60,23 +60,32 @@ A minimal Pomodoro timer application for Wear OS smartwatches built with Jetpack
 
 **Display**:
 - Large countdown timer in MM:SS format (e.g., "25:00", "04:32")
+  - Minutes displayed in primary theme color
+  - Colon separator in default text color
+  - Seconds displayed in secondary theme color
 - Timer type label (Focus/Short Break/Long Break)
 
-**Controls - Running State**:
-- **Pause** button (long pill-shaped, bottom) - Pauses the timer
+**Controls - Focus Timer Only**:
+- **Running State**:
+  - **Pause** button (long pill-shaped, bottom) - Pauses the timer
+- **Paused State**:
+  - **Resume** button (long pill-shaped) - Continue paused timer
+  - **Reset** button (long pill-shaped) - Reset to original duration AND immediately start running again
+  - Pause button disappears when paused
 
-**Controls - Paused State**:
-- **Resume** button (long pill-shaped) - Continue paused timer
-- **Reset** button (long pill-shaped) - Reset to original duration AND immediately start running again
-- Pause button disappears when paused
+**Controls - Break Timers (Short/Long Break)**:
+- No control buttons displayed
+- Timer runs automatically without pause/resume/reset options
+- Auto-run only mode
 
 **Navigation**:
 - Watch hardware button 2: Stop timer and return to main menu
 
-**Always-on Display**:
-- Simplified version of timer screen when watch face is covered
-- Lower power consumption mode
-- Timer continues counting in background
+**Power Management**:
+- Screen stays on during active timer using SCREEN_BRIGHT_WAKE_LOCK
+- Prevents watch from turning off screen completely
+- Wake lock flags: SCREEN_BRIGHT_WAKE_LOCK | ACQUIRE_CAUSES_WAKEUP | ON_AFTER_RELEASE
+- Wake lock automatically released when timer screen is disposed
 
 ### 4. Timer Completion
 **Notification**:
@@ -98,8 +107,11 @@ MainActivity.kt - Entry point & navigation setup
 ├── MenuScreen.kt - Main menu with 4 buttons
 ├── SettingsScreen.kt - Duration configuration
 ├── TimerScreen.kt - Countdown with pause/resume/reset
-├── TimerViewModel.kt - Timer logic & state management
-└── SettingsRepository.kt - SharedPreferences wrapper
+├── TimerViewModel.kt - Service binding & state exposure
+├── TimerService.kt - Foreground timer runtime
+├── TimerAlarmReceiver.kt - Completion alarm receiver
+├── SettingsRepository.kt - SharedPreferences wrapper
+└── model/TimerModels.kt - TimerType/TimerState models
 ```
 
 ### Technology Stack
@@ -107,24 +119,33 @@ MainActivity.kt - Entry point & navigation setup
 - **Navigation**: Wear Compose Navigation
 - **State Management**: ViewModel with Compose State
 - **Persistence**: SharedPreferences
-- **Permissions**: WAKE_LOCK, VIBRATE
+- **Permissions**: WAKE_LOCK, VIBRATE, FOREGROUND_SERVICE, POST_NOTIFICATIONS, FOREGROUND_SERVICE_DATA_SYNC
 
 ### Key Technical Requirements
 1. **Persistent Settings Storage**: Use SharedPreferences to store three integer values (focus, short_break, long_break durations in minutes)
 2. **Background Timer Support**: Timer must continue running when screen is off or app is in background
-3. **Always-on Display**: Implement ambient mode with simplified UI for power efficiency
-4. **Hardware Button Integration**: Watch button 2 acts as back/cancel button
+3. **Power Management**: Allow screen to turn off while the timer continues running
+   - Do not block palm-to-sleep
+   - Timer must remain accurate when the UI is not visible
+4. **Hardware Button Integration**: Watch button 2 is the system back key and acts as back/cancel
 5. **Vibration**: Use system vibrator service for timer completion notification
+6. **Foreground Service**: Timer runs as foreground service with notification
+7. **Notification Permission Flow**: Request POST_NOTIFICATIONS when starting a timer; warn if denied
 
 ### UI Specifications
 - **Button Style**: Long pill-shaped (rounded rectangular) buttons spanning most of screen width
 - **Colors**: Material Design defaults
   - Settings: Gray
   - Focus: Red
-  - Short Break: Green
+  - Short Break: Darker green
   - Long Break: Blue
-- **Timer Display**: Large, easily readable text in MM:SS format
+  - Timer minutes: Primary theme color
+  - Timer seconds: Secondary theme color
+- **Timer Display**: Large, easily readable text in MM:SS format with color-coded minutes and seconds
 - **Layout**: Optimized for round watch faces
+- **Button Visibility**: 
+  - Focus timer: Shows pause/resume/reset buttons
+  - Break timers: No control buttons (auto-run only)
 
 ### State Management
 **Timer States**:
@@ -149,9 +170,12 @@ Main Menu
 └── Long Break Button → Timer Screen (Long Break)
 
 Timer Screen
-├── Pause Button → Show Resume/Reset (hide Pause)
-├── Resume Button → Continue timer (show Pause)
-├── Reset Button → Restart timer from original duration
+├── Focus Timer:
+│   ├── Pause Button → Show Resume/Reset (hide Pause)
+│   ├── Resume Button → Continue timer (show Pause)
+│   └── Reset Button → Restart timer from original duration
+├── Break Timers (Short/Long):
+│   └── No control buttons (auto-run only)
 ├── Timer Completion → Main Menu (with vibration)
 └── Button 2 → Main Menu (stop timer)
 ```
@@ -190,7 +214,7 @@ data class TimerState(
 | Storage | SharedPreferences | Simplest for 3 integer values |
 | Colors | Material Design defaults | Accessible, less code, professional |
 | Completion | No visual indicator | Minimal implementation, vibration is sufficient |
-| Min SDK | API 30+ | Modern features, good device compatibility |
+| Min SDK | API 33+ | Modern features, good device compatibility |
 
 ## User Interaction Patterns
 
@@ -198,14 +222,21 @@ data class TimerState(
 1. User opens app → Main Menu displayed
 2. User taps Focus/Short Break/Long Break button
 3. Timer Screen appears with countdown starting immediately
-4. Timer counts down in MM:SS format
+4. Timer counts down in MM:SS format with color-coded display:
+   - Minutes in primary color
+   - Seconds in secondary color
+5. Screen stays on during timer (wake lock active)
+6. For Focus: Control buttons available
+7. For Breaks: No control buttons, auto-run only
 
-### Pausing and Resuming
-1. Timer is running
+### Pausing and Resuming (Focus Timer Only)
+1. Focus timer is running
 2. User taps Pause button
 3. Pause button disappears, Resume and Reset buttons appear
 4. User taps Resume → Timer continues from paused time
 5. OR User taps Reset → Timer resets to original duration and starts running
+
+Note: Break timers (Short/Long Break) do not have pause/resume/reset functionality
 
 ### Changing Settings
 1. User taps Settings button on Main Menu
@@ -230,20 +261,21 @@ data class TimerState(
 - Minimal comments (code should be self-explanatory)
 - No test code unless explicitly requested
 
-### Always-on Display Implementation
-- Use `AmbientState` from Wear Compose
-- Show simplified timer UI in ambient mode
-- Reduce brightness and remove colors in ambient mode
-- Timer continues counting in background
+### Power Management Implementation
+- Do not hold a screen wake lock
+- Use elapsed realtime to compute remaining time
+- Use AlarmManager to schedule completion so it fires when the screen is off
 
 ### Timer Implementation
-- Use `LaunchedEffect` with `delay(1000)` for countdown
-- Store remaining seconds in ViewModel state
-- Update UI every second when running
-- Persist timer state across configuration changes
+- Timer runs in `TimerService` as a foreground service
+- Remaining time is computed from `SystemClock.elapsedRealtime()`
+- UI subscribes to service state via `TimerViewModel`
+- Use AlarmManager to schedule timer completion
+- Use `buildAnnotatedString` with `SpanStyle` for color-coded timer display
+- Conditionally show buttons based on timer type (Focus vs Break)
 
 ### Vibration Implementation
-- Use `Vibrator` system service
+- Use `VibratorManager` default vibrator
 - Trigger on timer completion (0:00)
 - Single vibration pattern (no custom patterns needed)
 
@@ -254,6 +286,8 @@ app/src/main/
 ├── java/com/niuda/minimalpomodora/
 │   ├── data/
 │   │   └── SettingsRepository.kt
+│   ├── model/
+│   │   └── TimerModels.kt
 │   ├── presentation/
 │   │   ├── MainActivity.kt
 │   │   ├── MenuScreen.kt
@@ -261,6 +295,10 @@ app/src/main/
 │   │   ├── TimerScreen.kt
 │   │   ├── TimerViewModel.kt
 │   │   └── theme/
+│   │       └── Theme.kt
+│   ├── service/
+│   │   ├── TimerAlarmReceiver.kt
+│   │   └── TimerService.kt (Foreground service)
 │   └── res/
 │       ├── values/
 │       │   └── strings.xml
@@ -290,11 +328,14 @@ implementation("com.google.android.gms:play-services-wearable:18.0.0")
 
 ## Testing Considerations
 - Test on round watch face (primary use case)
-- Verify timer continues in background
-- Test always-on display mode
+- Verify timer continues in background and with screen off (palm-to-sleep)
+- Verify completion alarm triggers on time when screen is off
 - Verify vibration on timer completion
 - Test hardware button 2 navigation
 - Verify settings persistence across app restarts
+- Test Focus timer has control buttons
+- Test Break timers have no control buttons
+- Verify color-coded timer display (minutes/seconds)
 
 ## Future Enhancements (Not in Scope)
 - Session history/statistics
