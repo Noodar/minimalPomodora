@@ -1,50 +1,88 @@
 package com.niuda.minimalpomodora.presentation
 
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.setValue
+import android.content.ComponentName
+import android.content.Context
+import android.content.Intent
+import android.content.ServiceConnection
+import android.os.IBinder
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.ViewModel
-
-enum class TimerType { FOCUS, SHORT_BREAK, LONG_BREAK }
+import androidx.lifecycle.viewModelScope
+import com.niuda.minimalpomodora.model.TimerState
+import com.niuda.minimalpomodora.model.TimerType
+import com.niuda.minimalpomodora.service.TimerService
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 
 class TimerViewModel : ViewModel() {
-    var remainingSeconds by mutableStateOf(0)
-    var isRunning by mutableStateOf(false)
-    var isPaused by mutableStateOf(false)
-    var totalSeconds by mutableStateOf(0)
+    private val _state = MutableStateFlow(TimerState())
+    val state: StateFlow<TimerState> = _state.asStateFlow()
 
-    fun start(durationMinutes: Int) {
-        totalSeconds = durationMinutes * 60
-        remainingSeconds = totalSeconds
-        isRunning = true
-        isPaused = false
-    }
+    private var service: TimerService? = null
+    private var isBound = false
+    private var serviceStateJob: Job? = null
 
-    fun tick() {
-        if (isRunning && !isPaused && remainingSeconds > 0) {
-            remainingSeconds--
+    private val connection = object : ServiceConnection {
+        override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
+            val timerBinder = binder as? TimerService.TimerBinder ?: return
+            service = timerBinder.getService()
+            serviceStateJob?.cancel()
+            serviceStateJob = viewModelScope.launch {
+                service?.state?.collect { _state.value = it }
+            }
+        }
+
+        override fun onServiceDisconnected(name: ComponentName?) {
+            serviceStateJob?.cancel()
+            service = null
         }
     }
 
+    fun bind(context: Context) {
+        if (isBound) return
+        val intent = Intent(context, TimerService::class.java)
+        context.applicationContext.bindService(intent, connection, Context.BIND_AUTO_CREATE)
+        isBound = true
+    }
+
+    fun unbind(context: Context) {
+        if (!isBound) return
+        context.applicationContext.unbindService(connection)
+        isBound = false
+        serviceStateJob?.cancel()
+        service = null
+    }
+
+    fun start(context: Context, durationMinutes: Int, type: TimerType) {
+        val intent = Intent(context, TimerService::class.java).apply {
+            putExtra(TimerService.EXTRA_DURATION_MINUTES, durationMinutes)
+            putExtra(TimerService.EXTRA_TIMER_TYPE, type.name)
+        }
+        ContextCompat.startForegroundService(context, intent)
+    }
+
     fun pause() {
-        isPaused = true
+        service?.pause()
     }
 
     fun resume() {
-        isPaused = false
+        service?.resume()
     }
 
     fun reset() {
-        remainingSeconds = totalSeconds
-        isPaused = false
-        isRunning = true
+        service?.reset()
     }
 
     fun stop() {
-        isRunning = false
-        isPaused = false
-        remainingSeconds = 0
+        service?.stopTimer()
     }
 
-    fun isCompleted() = remainingSeconds == 0 && isRunning
+    override fun onCleared() {
+        super.onCleared()
+        serviceStateJob?.cancel()
+        service = null
+    }
 }
